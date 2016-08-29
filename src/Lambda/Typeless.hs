@@ -22,9 +22,11 @@ printTerm :: LTerm -> String
 printTerm = \case
   LVar (Var v)      -> show v
   LAbs (Var v) term -> "\\" ++ show v ++ ".(" ++ printTerm term ++ ")"
-  LApp t1 t2        -> printTerm t1 ++ " " ++ printTerm t2
+  LApp t1 t2        -> "(" ++ printTerm t1 ++ ") (" ++ printTerm t2 ++ ")"
 
 type TGen = State Var
+
+type GTerm = TGen LTerm
 
 runTGen :: TGen a -> a
 runTGen g = evalState g 0
@@ -48,6 +50,22 @@ var v = LVar <$> pure v
 app :: TGen LTerm -> TGen LTerm -> TGen LTerm
 app abs arg = LApp <$> abs <*> arg
 
+-- apps :: GTerm -> [GTerm] -> GTerm
+-- apps f
+
+chTrue :: GTerm
+chTrue = lam $ \t -> lam $ \f -> var t
+
+chFalse :: GTerm
+chFalse = lam $ \t -> lam $ \f -> var f
+
+-- | And for two church bools
+chAnd :: GTerm -> GTerm -> GTerm
+chAnd a b = app (app a b) chFalse
+
+chOr :: GTerm -> GTerm -> GTerm
+chOr a b = app (app a chTrue) b
+
 data CalcResult a
   = CStep a
   | CStop Cause LTerm
@@ -68,14 +86,16 @@ data Cause
     -- ^ Calculation stuck because term is not closed
   | Error String
     -- ^ Error because term malformed
+  deriving Show
 
 crMap :: (LTerm -> LTerm) -> CalcResult LTerm -> CalcResult LTerm
 crMap f = \case
   CStep t   -> CStep $ f t
   CStop c t -> CStop c $ f t
 
-calcStep :: LTerm -> CalcResult LTerm
-calcStep = go S.empty
+-- | Call by name stepper (like in Haskell)
+callByName :: LTerm -> CalcResult LTerm
+callByName = go S.empty
   where
     go
       :: Set Var
@@ -116,9 +136,10 @@ calcStep = go S.empty
         <*> replaceVar scope arg v lwhat
 
 -- | Generates potentially infinite list of calculation steps
-calculation :: (LTerm -> CalcResult LTerm) -> LTerm -> [LTerm]
-calculation step term = term:rest
+calculation :: (LTerm -> CalcResult LTerm) -> LTerm -> [Either String LTerm]
+calculation step term = Right term:rest
   where
     rest = case step term of
-      CStep t   -> calculation step t
-      CStop _ t -> [t]
+      CStep t        -> calculation step t
+      CStop Result t -> []      -- bcos previous term is the same
+      CStop e t      -> [Right t, Left $ show e]
