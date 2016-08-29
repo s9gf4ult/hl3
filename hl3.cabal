@@ -14,9 +14,15 @@ build-type:          Simple
 cabal-version:       >=1.10
 
 library
+  default-extensions: DeriveFunctor
+                    , GeneralizedNewtypeDeriving
+                    , LambdaCase
+                    , MultiWayIf
   hs-source-dirs:      src
-  exposed-modules:     Lib
+  exposed-modules:     Lambda.Typeless
   build-depends:       base >= 4.7 && < 5
+                     , containers
+                     , mtl
   default-language:    Haskell2010
 
 source-repository head
