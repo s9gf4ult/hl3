@@ -26,14 +26,18 @@ type CalcStep = Either Stop
 
 -- | Call by name stepper (like in Haskell). Before calculation term must be
 -- sanitized
-callByName :: Term -> CalcStep Term
-callByName t = case t of
+fullReduce :: Term -> CalcStep Term
+fullReduce t = case t of
   TVar _ ->
     Left $ Stop Result t
-  TAbs v term -> TAbs v <$> callByName term
+  TAbs v term -> TAbs v <$> fullReduce term
   TApp abs arg -> case abs of
     TAbs v term -> pure $ replaceVar v arg term
-    _           -> (`TApp` arg) <$> callByName abs
+    _           -> case fullReduce abs of
+      Right nuAbs -> Right $ TApp nuAbs arg
+      Left stop -> case stop ^. stopCause of
+        Result -> TApp abs <$> fullReduce arg
+        _      -> Left stop
 
 replaceVar
   :: Var
@@ -79,12 +83,16 @@ calculation step term = Right term:rest
         Result -> []  -- bcos previous term is the same
         _      -> [Left stop]
 
+calcDetails :: Term -> [CalcStep Term]
+calcDetails t = case sanitizeTerm t of
+  Left s -> [Left s]
+  Right _ -> take 10 $  calculation fullReduce t
 
 justCalc :: Term -> CalcStep (Int, Term)
 justCalc t = case sanitizeTerm t of
   Left s  -> Left s
   Right _ ->
-    let (f, l) = L.splitAt 1000 $ calculation callByName t
+    let (f, l) = L.splitAt 1000 $ calculation fullReduce t
     in case l of
       []    -> case last f of
         Right a   -> Right (length f, a)
