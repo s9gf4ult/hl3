@@ -20,6 +20,9 @@ library
                     , MultiWayIf
   hs-source-dirs:      src
   exposed-modules:     Lambda.Typeless
+                     , Lambda.Typeless.Calculation
+                     , Lambda.Typeless.Language
+                     , Lambda.Typeless.Math
   build-depends:       base >= 4.7 && < 5
                      , containers
                      , mtl
