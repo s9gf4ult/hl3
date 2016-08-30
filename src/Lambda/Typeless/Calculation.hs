@@ -1,22 +1,22 @@
 module Lambda.Typeless.Calculation where
 
+import Control.Lens
 import Data.Set (Set)
 import Lambda.Typeless.Language
 
 import qualified Data.Set as S
 
-data CalcResult a
-  = CStep a
-  | CStop Cause LTerm
-  deriving (Functor)
+data CalcStep = Either Stop
 
-instance Applicative CalcResult where
-  pure = CStep
-  (<*>) = \case
-    CStep f -> \case
-      CStep a -> CStep $ f a
-      CStop e t -> CStop e t
-    CStop e t -> const $ CStop e t
+data Stop = Stop
+  { _stopCause :: Cause
+  , _stopInner :: Term
+    -- ^ Inner term calculation was stopped in
+  , _stopOuter :: Term
+    -- ^ Outer term containing inner one
+  } deriving Show
+
+makeLenses ''Stop
 
 data Cause
   = Result
@@ -27,49 +27,49 @@ data Cause
     -- ^ Error because term malformed
   deriving Show
 
-crMap :: (LTerm -> LTerm) -> CalcResult LTerm -> CalcResult LTerm
+crMap :: (Term -> Term) -> CalcStep Term -> CalcStep Term
 crMap f = \case
-  CStep t   -> CStep $ f t
-  CStop c t -> CStop c $ f t
+  Right t   -> Right $ f t
+  Left c -> Left
 
 -- | Call by name stepper (like in Haskell)
-callByName :: LTerm -> CalcResult LTerm
+callByName :: Term -> CalcStep Term
 callByName = go S.empty
   where
     go
       :: Set Var
          -- ^ Scope of current calculation
-      -> LTerm
-      -> CalcResult LTerm
+      -> Term
+      -> CalcStep Term
     go scope = \case
-      LVar v ->
+      TVar v ->
         let cause = if S.member v scope
                     then Result
                     else Stuck
-        in CStop cause $ LVar v
-      t@(LAbs v term) ->
+        in CStop cause $ TVar v
+      t@(TAbs v term) ->
         if S.member v scope
         then CStop (Error $ nonUniq v) t
-        else crMap (LAbs v) $ go (S.insert v scope) term
-      t@(LApp abs arg) -> case abs of
-        LAbs v term ->
+        else crMap (TAbs v) $ go (S.insert v scope) term
+      t@(TApp abs arg) -> case abs of
+        TAbs v term ->
           if S.member v scope
           then CStop (Error $ nonUniq v) t
           else replaceVar (S.insert v scope) term v arg
-        term -> crMap (`LApp` arg) $ go scope term
+        term -> crMap (`TApp` arg) $ go scope term
 
 
-    replaceVar :: Set Var -> LTerm -> Var -> LTerm -> CalcResult LTerm
+    replaceVar :: Set Var -> Term -> Var -> Term -> CalcStep Term
     replaceVar scope lwhere v lwhat = case lwhere of
-      LVar lv ->
+      TVar lv ->
         if | lv == v -> CStep lwhat
            | S.member lv scope -> CStep lwhere
            | otherwise -> CStop Stuck lwhere
-      LAbs lv term ->
+      TAbs lv term ->
         if S.member lv scope
         then CStop (Error $ nonUniq lv) lwhere
-        else crMap (LAbs lv) $ replaceVar (S.insert lv scope) term v lwhat
-      LApp abs arg -> LApp
+        else crMap (TAbs lv) $ replaceVar (S.insert lv scope) term v lwhat
+      TApp abs arg -> TApp
         <$> replaceVar scope abs v lwhat
         <*> replaceVar scope arg v lwhat
 
@@ -79,20 +79,20 @@ nonUniq (Var v) = "Variable already in scope: " ++ show v
 
 -- | Returns either error message or list of free variables. Closed term have no
 -- free variables
-checkTerm :: LTerm -> Either String (Set Var)
+checkTerm :: Term -> Either String (Set Var)
 checkTerm = go S.empty
   where
     go scope = \case
-      LVar v
+      TVar v
         | S.notMember v scope -> Right $ S.singleton v
         | otherwise -> Right $ S.empty
-      LAbs v term
-        | S.member v scope -> Left (nonUniq v)
+      TAbs v term
+        | S.member v scope -> Teft (nonUniq v)
         | otherwise -> go (S.insert v scope) term
-      LApp abs arg -> S.union <$> go scope abs <*> go scope arg
+      TApp abs arg -> S.union <$> go scope abs <*> go scope arg
 
 -- | Generates potentially infinite list of calculation steps
-calculation :: (LTerm -> CalcResult LTerm) -> LTerm -> [Either String LTerm]
+calculation :: (Term -> CalcStep Term) -> Term -> [Either String Term]
 calculation step term = Right term:rest
   where
     rest = case step term of
