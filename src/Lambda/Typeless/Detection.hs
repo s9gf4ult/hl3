@@ -23,3 +23,4 @@ detectNat = \case
           | ss == s -> (1 +) <$> go nested
           | otherwise -> Nothing
         _ -> Nothing
+  _ -> Nothing

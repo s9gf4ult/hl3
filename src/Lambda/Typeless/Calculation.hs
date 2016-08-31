@@ -1,10 +1,12 @@
 module Lambda.Typeless.Calculation where
 
 import Control.Lens
+import Data.Map.Strict (Map)
 import Data.Set (Set)
 import Lambda.Typeless.Language
 
 import qualified Data.List as L
+import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 
 data Cause
@@ -24,19 +26,18 @@ makeLenses ''Stop
 
 type CalcStep = Either Stop
 
--- | Call by name stepper (like in Haskell). Before calculation term must be
--- sanitized
+-- | Assumes all binded variables are uniqe
 fullReduce :: Term -> CalcStep Term
 fullReduce t = case t of
   TVar _ ->
     Left $ Stop Result t
   TAbs v term -> TAbs v <$> fullReduce term
-  TApp abs arg -> case abs of
+  TApp abst arg -> case abst of
     TAbs v term -> pure $ replaceVar v arg term
-    _           -> case fullReduce abs of
+    _           -> case fullReduce abst of
       Right nuAbs -> Right $ TApp nuAbs arg
       Left stop -> case stop ^. stopCause of
-        Result -> TApp abs <$> fullReduce arg
+        Result -> TApp abst <$> fullReduce arg
         _      -> Left stop
 
 replaceVar
@@ -53,48 +54,49 @@ replaceVar v trepl twhere = case twhere of
     | otherwise -> twhere
   TAbs lv term ->
     TAbs lv $ replaceVar v trepl term
-  TApp abs arg -> TApp (replaceVar v trepl abs) (replaceVar v trepl arg)
+  TApp abst arg -> TApp (replaceVar v trepl abst) (replaceVar v trepl arg)
 
-nonUniq :: Var -> String
-nonUniq (Var v) = "Variable already in scope: " ++ show v
-
-
--- | Returns either error message or list of free variables. Closed term have no
--- free variables
-sanitizeTerm :: Term -> CalcStep (Set Var)
-sanitizeTerm = go S.empty
+-- | Returns list of free variables. Closed term have no free variables
+freeVars :: Term -> Set Var
+freeVars = go S.empty
   where
     go scope t = case t of
       TVar v
-        | S.notMember v scope -> Right $ S.singleton v
-        | otherwise           -> Right $ S.empty
-      TAbs v term
-        | S.member v scope -> Left $ Stop (Error (nonUniq v)) t
-        | otherwise        -> go (S.insert v scope) term
-      TApp abs arg -> S.union <$> go scope abs <*> go scope arg
+        | S.notMember v scope -> S.singleton v
+        | otherwise           -> S.empty
+      TAbs v term   -> go (S.insert v scope) term
+      TApp abst arg -> S.union (go scope abst) (go scope arg)
+
+renameVars :: Term -> GTerm
+renameVars term = go (freeVars term) M.empty term
+  where
+    go :: Set Var -> Map Var Var -> Term -> GTerm
+    go free repVar t = case t of
+      TVar
+
 
 -- | Generates potentially infinite list of calculation steps
 calculation :: (Term -> CalcStep Term) -> Term -> [CalcStep Term]
-calculation step term = Right term:rest
+calculation step term = case sanitizeTerm term of
+  Left stop -> [Left stop]
+  Right vars -> go vars term         -- to track that free fariables stay same
   where
-    rest = case step term of
-      Right t   -> calculation step t
-      Left stop -> case stop ^. stopCause of
-        Result -> []  -- bcos previous term is the same
-        _      -> [Left stop]
-
-calcDetails :: Term -> [CalcStep Term]
-calcDetails t = case sanitizeTerm t of
-  Left s -> [Left s]
-  Right _ -> take 10 $  calculation fullReduce t
+    go vars sanTerm =
+      let
+        rest = case step sanTerm of
+          Left stop -> [Left stop]
+          Right nextTerm -> case sanitizeTerm nextTerm of
+            Left stop -> [Right nextTerm, Left stop]
+            Right newVars
+              | newVars == vars -> go vars nextTerm
+              | otherwise -> [Left $ Stop (Error "free variables differ") nextTerm ]
+      in Right sanTerm:rest
 
 justCalc :: Term -> CalcStep (Int, Term)
-justCalc t = case sanitizeTerm t of
-  Left s  -> Left s
-  Right _ ->
-    let (f, l) = L.splitAt 1000 $ calculation fullReduce t
-    in case l of
-      []    -> case last f of
-        Right a   -> Right (length f, a)
-        Left stop -> Left stop
-      (x:_) -> Left $ Stop (Error "Too much stpes") $ x ^?! _Right
+justCalc t =
+  let (f, l) = L.splitAt 1000 $ calculation fullReduce t
+  in case l of
+    [] -> case last f of
+      Right a   -> Right (length f, a)
+      Left stop -> Left stop
+    (x:_) -> either Left (Left . Stop (Error "Too much steps")) x
