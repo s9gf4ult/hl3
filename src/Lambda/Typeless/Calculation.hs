@@ -108,7 +108,7 @@ calculation step term =
 
 justCalc :: Term -> CalcStep (Int, Term)
 justCalc t =
-  let (f, l) = L.splitAt 1000 $ calculation fullReduce t
+  let (f, l) = L.splitAt 1000000 $ calculation fullReduce t
   in case l of
     [] -> case tickEither $ last f of
       Right a   -> Right (length f, a)

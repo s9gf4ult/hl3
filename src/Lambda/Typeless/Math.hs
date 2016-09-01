@@ -3,10 +3,10 @@ module Lambda.Typeless.Math where
 import Lambda.Typeless.Language
 
 chTrue :: GTerm
-chTrue = lam $ \t -> lam $ \f -> var t
+chTrue = lam $ \t -> lam $ \_ -> var t
 
 chFalse :: GTerm
-chFalse = lam $ \t -> lam $ \f -> var f
+chFalse = lam $ \_ -> lam $ \f -> var f
 
 -- | Two argument function taking two church bools
 chAnd :: GTerm
@@ -21,12 +21,12 @@ chPair = lam $ \a -> lam $ \b -> lam $ \f -> apps (var f) [var a, var b]
 chFst :: GTerm
 chFst = lam $ \p -> app (var p) getFst
   where
-    getFst = lam $ \a -> lam $ \b -> var a
+    getFst = lam $ \a -> lam $ \_ -> var a
 
 chSnd :: GTerm
 chSnd = lam $ \p -> app (var p) getSnd
   where
-    getSnd = lam $ \a -> lam $ \b -> var b
+    getSnd = lam $ \_ -> lam $ \b -> var b
 
 chNat :: Int -> GTerm
 chNat w = lam $ \s -> lam $ \n -> compose (replicate w $ var s) $ var n
@@ -57,7 +57,16 @@ chDec = lam $ \a ->
 chNull :: GTerm
 chNull = lam $ \a -> apps (var a) [lam $ \_ -> chFalse, chTrue]
 
--- -- | Nat -> Nat
--- chFactorial :: GTerm
--- chFactorial =
---   lam $ \a -> apps (app chNull a) [apps chMul (var a) , chNat 1]
+chFix :: GTerm
+chFix = lam $ \f ->
+  let lx = lam $ \x -> app (var f) (app (var x) (var x))
+  in app lx lx
+
+-- | Nat -> Nat
+chFactorial :: GTerm
+chFactorial =
+  app chFix $ lam $ \fac ->
+  lam $ \a -> apps (app chNull $ var a)
+              [ chNat 1
+              , apps chMul [ var a
+                           , compose [chDec, var fac] $ var a ] ]
