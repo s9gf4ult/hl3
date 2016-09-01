@@ -52,3 +52,12 @@ chDec = lam $ \a ->
   let zz = apps chPair [chNat 0, chNat 0]
       f = upPair
   in app chFst $ apps (var a) [f, zz]
+
+-- | :: Nat -> Bool
+chNull :: GTerm
+chNull = lam $ \a -> apps (var a) [lam $ \_ -> chFalse, chTrue]
+
+-- -- | Nat -> Nat
+-- chFactorial :: GTerm
+-- chFactorial =
+--   lam $ \a -> apps (app chNull a) [apps chMul (var a) , chNat 1]

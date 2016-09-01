@@ -1,6 +1,7 @@
 module Lambda.Typeless.Calculation where
 
 import Control.Lens
+import Control.Monad.State
 import Data.Map.Strict (Map)
 import Data.Set (Set)
 import Lambda.Typeless.Language
@@ -25,6 +26,15 @@ data Stop = Stop
 makeLenses ''Stop
 
 type CalcStep = Either Stop
+
+data Tick = Step Term | Rename Term | Finish Stop
+          deriving Show
+
+tickEither :: Tick -> Either Stop Term
+tickEither = \case
+  Step t   -> Right t
+  Rename t -> Right t
+  Finish s -> Left s
 
 -- | Assumes all binded variables are uniqe
 fullReduce :: Term -> CalcStep Term
@@ -67,36 +77,40 @@ freeVars = go S.empty
       TAbs v term   -> go (S.insert v scope) term
       TApp abst arg -> S.union (go scope abst) (go scope arg)
 
-renameVars :: Term -> GTerm
-renameVars term = go (freeVars term) M.empty term
+renameVars :: Term -> Term
+renameVars term' =
+  let startVar = maybe 0 (succ . fst) $ S.maxView $ freeVars term'
+  in evalState (go M.empty term') startVar
   where
-    go :: Set Var -> Map Var Var -> Term -> GTerm
-    go free repVar t = case t of
-      TVar
+    go :: Map Var Var -> Term -> GTerm
+    go repVar t = case t of
+      TVar v -> case M.lookup v repVar of
+        Nothing     -> pure t        -- seems variable is free
+        Just newVar -> pure $ TVar newVar
+      TAbs v term -> do
+        newVar <- nextVar
+        TAbs newVar <$> go (M.insert v newVar repVar) term
+      TApp abst arg -> TApp <$> go repVar abst <*> go repVar arg
 
 
--- | Generates potentially infinite list of calculation steps
-calculation :: (Term -> CalcStep Term) -> Term -> [CalcStep Term]
-calculation step term = case sanitizeTerm term of
-  Left stop -> [Left stop]
-  Right vars -> go vars term         -- to track that free fariables stay same
-  where
-    go vars sanTerm =
-      let
-        rest = case step sanTerm of
-          Left stop -> [Left stop]
-          Right nextTerm -> case sanitizeTerm nextTerm of
-            Left stop -> [Right nextTerm, Left stop]
-            Right newVars
-              | newVars == vars -> go vars nextTerm
-              | otherwise -> [Left $ Stop (Error "free variables differ") nextTerm ]
-      in Right sanTerm:rest
+-- | Generates potentially infinite list of calculation steps. Assumes first
+-- term have uniq binded variables.
+calculation :: (Term -> CalcStep Term) -> Term -> [Tick]
+calculation step term =
+  let
+    renTerm = renameVars term
+    rest = case step renTerm of
+      Left stop -> case stop ^. stopCause of
+        Result -> []            -- previous term is result
+        _ -> [Finish stop]
+      Right nextTerm -> calculation step nextTerm
+  in Step term : Rename renTerm : rest
 
 justCalc :: Term -> CalcStep (Int, Term)
 justCalc t =
   let (f, l) = L.splitAt 1000 $ calculation fullReduce t
   in case l of
-    [] -> case last f of
+    [] -> case tickEither $ last f of
       Right a   -> Right (length f, a)
       Left stop -> Left stop
-    (x:_) -> either Left (Left . Stop (Error "Too much steps")) x
+    (x:_) -> either Left (Left . Stop (Error "Too much steps")) $ tickEither x
